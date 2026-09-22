@@ -179,37 +179,85 @@ class OverlayController(private val ctx: Context) {
     // --------------------------------------------------------------- gestures
 
     private fun attachBubbleTouch(v: View, params: WindowManager.LayoutParams) {
-        var startX = 0; var startY = 0; var touchX = 0f; var touchY = 0f
-        var moved = false; var downTime = 0L; var longFired = false
+        val touchSlop = android.view.ViewConfiguration.get(ctx).scaledTouchSlop.coerceAtLeast(dp(10))
+        var startX = 0
+        var startY = 0
+        var touchDownX = 0f
+        var touchDownY = 0f
+        var downTime = 0L
+        var isDragging = false
+        var longFired = false
+
         val longPress = Runnable {
-            if (!moved) { longFired = true; showBubbleMenu() }
+            if (!isDragging) {
+                longFired = true
+                showBubbleMenu()
+            }
         }
+
         v.setOnTouchListener { _, e ->
             when (e.action) {
                 MotionEvent.ACTION_DOWN -> {
-                    startX = params.x; startY = params.y; touchX = e.rawX; touchY = e.rawY
-                    moved = false; longFired = false; downTime = System.currentTimeMillis()
-                    v.postDelayed(longPress, 500); true
+                    startX = params.x
+                    startY = params.y
+                    touchDownX = e.rawX
+                    touchDownY = e.rawY
+                    downTime = System.currentTimeMillis()
+                    isDragging = false
+                    longFired = false
+                    v.postDelayed(longPress, 500)
+                    v.animate().scaleX(0.92f).scaleY(0.92f).setDuration(80).start()
+                    true
                 }
                 MotionEvent.ACTION_MOVE -> {
-                    val dx = (e.rawX - touchX).toInt(); val dy = (e.rawY - touchY).toInt()
-                    if (abs(dx) > dp(6) || abs(dy) > dp(6)) moved = true
-                    // Keep a margin from both side edges: the extreme edge is MIUI's
-                    // back-gesture zone, which steals touches and makes the bubble
-                    // "stuck". Free positioning (no forced edge snap) also avoids it.
-                    params.x = (startX + dx).coerceIn(dp(8), screenW - dp(60))
-                    params.y = (startY + dy).coerceIn(dp(24), screenH - dp(120))
-                    root?.let { runCatching { wm.updateViewLayout(it, params) } }
+                    val dx = e.rawX - touchDownX
+                    val dy = e.rawY - touchDownY
+                    val dist = kotlin.math.hypot(dx.toDouble(), dy.toDouble()).toFloat()
+
+                    if (!isDragging && dist > touchSlop) {
+                        isDragging = true
+                        v.removeCallbacks(longPress)
+                        v.animate().scaleX(1.05f).scaleY(1.05f).setDuration(100).start()
+                    }
+
+                    if (isDragging) {
+                        params.x = (startX + dx.toInt()).coerceIn(dp(8), screenW - dp(60))
+                        params.y = (startY + dy.toInt()).coerceIn(dp(24), screenH - dp(120))
+                        root?.let { runCatching { wm.updateViewLayout(it, params) } }
+                    }
                     true
                 }
                 MotionEvent.ACTION_UP -> {
                     v.removeCallbacks(longPress)
-                    if (longFired) { true }
-                    else if (moved) {
-                        prefs.bubbleX = params.x; prefs.bubbleY = params.y; true  // stays where dropped
-                    } else { toggle(); true }
+                    v.animate().scaleX(1.0f).scaleY(1.0f).setDuration(100).start()
+
+                    val elapsed = System.currentTimeMillis() - downTime
+                    val dx = e.rawX - touchDownX
+                    val dy = e.rawY - touchDownY
+                    val dist = kotlin.math.hypot(dx.toDouble(), dy.toDouble()).toFloat()
+
+                    if (longFired) {
+                        true
+                    } else if (isDragging && dist > touchSlop) {
+                        prefs.bubbleX = params.x
+                        prefs.bubbleY = params.y
+                        true
+                    } else if (elapsed < 500 && dist <= touchSlop * 1.5f) {
+                        toggle()
+                        true
+                    } else if (!isDragging) {
+                        toggle()
+                        true
+                    } else {
+                        true
+                    }
                 }
-                MotionEvent.ACTION_CANCEL -> { v.removeCallbacks(longPress); true }
+                MotionEvent.ACTION_CANCEL -> {
+                    v.removeCallbacks(longPress)
+                    v.animate().scaleX(1.0f).scaleY(1.0f).setDuration(100).start()
+                    isDragging = false
+                    true
+                }
                 else -> false
             }
         }
@@ -246,19 +294,22 @@ class OverlayController(private val ctx: Context) {
     private var collapsedY = dp(150)
 
     private fun toggle() {
-        expanded = !expanded
+        val p = panel ?: return
         val params = lp ?: return
+        expanded = !expanded
         if (expanded) {
-            // Open the panel from the left, fully on-screen and up high (clear of the
-            // input box), regardless of which edge the bubble was snapped to.
-            collapsedX = params.x; collapsedY = params.y
+            if (params.x > dp(10)) {
+                collapsedX = params.x
+                collapsedY = params.y
+            }
             params.x = dp(6)
             val maxTop = (screenH * 0.14f).roundToInt()
             if (params.y > maxTop) params.y = maxTop
-            panel?.visibility = View.VISIBLE
+            p.visibility = View.VISIBLE
         } else {
-            panel?.visibility = View.GONE
-            params.x = collapsedX; params.y = collapsedY  // bubble returns to where it was
+            p.visibility = View.GONE
+            params.x = collapsedX
+            params.y = collapsedY
         }
         android.util.Log.d("JEVASSIST", "overlay: toggle expanded=$expanded x=${params.x} y=${params.y} saved=($collapsedX,$collapsedY)")
         root?.let { runCatching { wm.updateViewLayout(it, params) } }

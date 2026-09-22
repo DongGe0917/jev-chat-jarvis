@@ -3,27 +3,97 @@ package com.jev.probe.core
 import android.content.Context
 
 /**
- * App-private config store. Holds the OpenRouter key, model choices, the
- * relationship description used in Jev's state, and the conversation whitelist.
+ * App-private config store. Holds multi-platform API settings (Cherry Studio style),
+ * model choices, the relationship description used in state, and conversation whitelist.
  *
  * Key handling: stored in app-private SharedPreferences (not world-readable,
- * never logged, never in code/git). Hardening to EncryptedSharedPreferences is
- * a follow-up; on the user's own device app-private storage is the MVP bar.
+ * never logged, never in code/git).
  */
 class Prefs(context: Context) {
 
     private val sp = context.getSharedPreferences("jev_assistant", Context.MODE_PRIVATE)
 
+    /** Currently active provider ID (e.g. DEEPSEEK, OPENAI, OPENROUTER, etc.) */
+    var apiProvider: String
+        get() = sp.getString(K_PROVIDER, ApiProviders.DEEPSEEK.id) ?: ApiProviders.DEEPSEEK.id
+        set(v) = sp.edit().putString(K_PROVIDER, v.trim()).apply()
+
+    val currentProvider: ApiProvider
+        get() = ApiProviders.find(apiProvider)
+
+    fun getKey(providerId: String): String {
+        val saved = sp.getString("key_${providerId.uppercase()}", "") ?: ""
+        if (saved.isNotBlank()) return saved
+        // Legacy fallback for OPENROUTER
+        if (providerId.equals(ApiProviders.OPENROUTER.id, ignoreCase = true)) {
+            return sp.getString(K_LEGACY_KEY, "") ?: ""
+        }
+        return ""
+    }
+
+    fun setKey(providerId: String, key: String) {
+        val pid = providerId.uppercase()
+        sp.edit().putString("key_$pid", key.trim()).apply()
+        if (pid == ApiProviders.OPENROUTER.id) {
+            sp.edit().putString(K_LEGACY_KEY, key.trim()).apply()
+        }
+    }
+
+    fun getBaseUrl(providerId: String): String {
+        val def = ApiProviders.find(providerId).defaultBaseUrl
+        val url = sp.getString("url_${providerId.uppercase()}", "") ?: ""
+        return if (url.isBlank()) def else url
+    }
+
+    fun setBaseUrl(providerId: String, url: String) {
+        sp.edit().putString("url_${providerId.uppercase()}", url.trim()).apply()
+    }
+
+    fun getModel(providerId: String): String {
+        val def = ApiProviders.find(providerId).defaultModel
+        val m = sp.getString("model_${providerId.uppercase()}", "") ?: ""
+        if (m.isNotBlank()) return m
+        if (providerId.equals(ApiProviders.OPENROUTER.id, ignoreCase = true)) {
+            val legacyModel = sp.getString(K_LEGACY_REPLY_MODEL, "") ?: ""
+            if (legacyModel.isNotBlank()) return legacyModel
+        }
+        return def
+    }
+
+    fun setModel(providerId: String, model: String) {
+        val pid = providerId.uppercase()
+        sp.edit().putString("model_$pid", model.trim()).apply()
+        if (pid == ApiProviders.OPENROUTER.id) {
+            sp.edit().putString(K_LEGACY_REPLY_MODEL, model.trim()).apply()
+        }
+    }
+
+    /** Active provider's key */
+    var apiKey: String
+        get() = getKey(apiProvider)
+        set(v) = setKey(apiProvider, v)
+
+    /** Active provider's Base URL */
+    var apiBaseUrl: String
+        get() = getBaseUrl(apiProvider)
+        set(v) = setBaseUrl(apiProvider, v)
+
+    /** Active provider's selected model */
+    var apiModel: String
+        get() = getModel(apiProvider)
+        set(v) = setModel(apiProvider, v)
+
+    /** Legacy compatibility for openRouterKey */
     var openRouterKey: String
-        get() = sp.getString(K_KEY, "") ?: ""
-        set(v) = sp.edit().putString(K_KEY, v.trim()).apply()
+        get() = getKey(ApiProviders.OPENROUTER.id)
+        set(v) = setKey(ApiProviders.OPENROUTER.id, v)
 
-    /** Generative model for drafting the 3 candidate replies (OpenRouter chat). */
+    /** Legacy compatibility for replyModel */
     var replyModel: String
-        get() = sp.getString(K_REPLY_MODEL, DEFAULT_REPLY_MODEL) ?: DEFAULT_REPLY_MODEL
-        set(v) = sp.edit().putString(K_REPLY_MODEL, v.trim()).apply()
+        get() = apiModel
+        set(v) = setModel(apiProvider, v)
 
-    /** Free-text describing who the other person is; goes into Jev's state. */
+    /** Free-text describing who the other person is; goes into state. */
     var relationship: String
         get() = sp.getString(K_REL, DEFAULT_REL) ?: DEFAULT_REL
         set(v) = sp.edit().putString(K_REL, v).apply()
@@ -61,6 +131,11 @@ class Prefs(context: Context) {
         get() = sp.getBoolean(K_AUTO, true)
         set(v) = sp.edit().putBoolean(K_AUTO, v).apply()
 
+    /** Custom reply style / persona instructions for candidate drafts */
+    var customStyle: String
+        get() = sp.getString(K_CUSTOM_STYLE, DEFAULT_CUSTOM_STYLE) ?: DEFAULT_CUSTOM_STYLE
+        set(v) = sp.edit().putString(K_CUSTOM_STYLE, v.trim()).apply()
+
     fun isAllowed(title: String?): Boolean {
         val wl = whitelist
         if (wl.isEmpty()) return true
@@ -68,12 +143,14 @@ class Prefs(context: Context) {
         return wl.any { title.contains(it) }
     }
 
-    fun hasKey(): Boolean = openRouterKey.isNotBlank()
+    fun hasKey(): Boolean = apiKey.isNotBlank()
 
     companion object {
-        private const val K_KEY = "openrouter_key"
-        private const val K_REPLY_MODEL = "reply_model"
+        private const val K_PROVIDER = "api_provider"
+        private const val K_LEGACY_KEY = "openrouter_key"
+        private const val K_LEGACY_REPLY_MODEL = "reply_model"
         private const val K_REL = "relationship"
+        private const val K_CUSTOM_STYLE = "custom_style"
         private const val K_ENABLED = "enabled"
         private const val K_WHITELIST = "whitelist"
         private const val K_OPACITY = "overlay_opacity"
@@ -81,9 +158,7 @@ class Prefs(context: Context) {
         private const val K_BUBBLE_X = "bubble_x"
         private const val K_AUTO = "auto_analyze"
 
-        // Reply drafting model on OpenRouter. DeepSeek is region-available in CN,
-        // strong in Chinese, and cheap (Gemini/OpenAI are region-blocked here).
-        const val DEFAULT_REPLY_MODEL = "deepseek/deepseek-chat-v3.1"
         const val DEFAULT_REL = "对方是我的伴侣；from=me 的是我发的，from=other 的是对方发的"
+        const val DEFAULT_CUSTOM_STYLE = "自然口语、接地气、真诚真切，严禁假大空套话"
     }
 }

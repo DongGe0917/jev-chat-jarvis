@@ -4,7 +4,7 @@
 
 已在 **微信、QQ、X（Twitter 私信）** 三个平台真机跑通，飞书采集已接入。一套内核，一个 App 一个几十行的适配器。
 
-**联系 / 反馈 / 合作：请公众号私信**（二维码见文末）。 官网：[chatjevs.com](https://chatjevs.com)
+**联系 / 反馈 / 合作：请公众号私信**（二维码见文末）。
 
 <p align="center">
   <img src="docs/images/overlay.png" width="300" alt="悬浮窗：聊天上方的 Jev 分析面板" />
@@ -13,12 +13,19 @@
 </p>
 <p align="center"><sub>左：悬浮窗——危险等级、对方真实意图、Jev 排好序的 3 条候选回复，复制或填入。右：设置页。</sub></p>
 
+> [!TIP]
+> **🚀 v1.3 Enhanced Fork (多服务商与交互优化版) 新增特性**：
+> - 🌐 **Cherry Studio 风格多平台接入**：告别仅支持 OpenRouter 的限制，原生直连 **DeepSeek**、**OpenAI**、**硅基流动 (SiliconFlow)**、**月之暗面 (Moonshot / Kimi)**、**智谱 AI (GLM)** 及 **自定义 API (OneAPI/Ollama)**，各平台 Key / Base URL / 模型独立存储。
+> - 🧠 **深度内置 Jev 心理研判内核**：将原版 7 大心理学校准规则（潜台词试探识别、10级冲突阶梯、避免瞎猜/优先翻记录）作为通用 Prompt 深度内置，国产大模型无需特定专有接口也能精准研判。
+> - 🎭 **人设与回复风格定制**：新增人设配置区，支持一键切换 `日常自然`、`幽默机智`、`温柔暖心`、`职场严谨`、`简短克制` 等风格。
+> - ⚡ **彻底告别悬浮球卡顿**：重构触控算法，配合 300ms 无障碍事件防抖节流，彻底解决微信界面点击 Jev 悬浮球卡顿、开合失灵的问题。
+
 ## 亮点
 
 - **一套内核，多平台。** 微信 8.0.78、QQ 9.3.50、X 12.25 真机验证，读消息 → 判断 → 候选 → 填入整条链全通。新增一个 App 只需实现一个 `ChatAppAdapter`，其余全部复用。
 - **非侵入。** 不 hook、不改包、不走任何 App 的接口或账号、不读数据库，只用系统无障碍服务读「屏幕上正在显示的对话」。微信这种混淆节点的也能读到。
-- **看得懂，不止会写。** 用 [TypeSafe Jev](https://typesafe.ai/) 判断模型一次给出：对方真实意图、危险等级（1–9）、对方要什么、该不该马上回、最佳动作。约 1 秒，带把握度。
-- **3 条候选，Jev 排序。** 生成模型（默认 DeepSeek）起草 3 条口语化回复，Jev 按「最合适」排序并给出占比。
+- **看得懂，不止会写。** 用 [TypeSafe Jev](https://typesafe.ai/) 判断模型或通用深度提示词一次给出：对方真实意图、危险等级（1–9）、对方要什么、该不该马上回、最佳动作。约 1 秒，带把握度。
+- **3 条候选，Jev 排序。** 生成模型（支持 DeepSeek 等全平台）起草 3 条口语化回复，并按契合度智能排序与给出占比。
 - **发送永远由你点。** 程序只把回复填进输入框，从不自动发送，不碰转账 / 红包 / 收款。
 - **隐私在本机。** 密钥只存 App 私有空间，聊天内容只在分析那一刻发给模型接口，不落盘、不进日志。
 
@@ -36,13 +43,15 @@
 
 ## 快速开始
 
-**1. 装包。** 仓库里有签好名的 release 包：[`apk/jev-assistant-v1.2-release.apk`](apk/jev-assistant-v1.2-release.apk)（Android 11+）。
+**1. 装包。**
+- **最新 v1.3 多平台增强版**：[`apk/jev-assistant-v1.3-debug.apk`](apk/jev-assistant-v1.3-debug.apk)（推荐，内置 Cherry Studio 模式多平台直连、Jev 研判提示词与悬浮球防卡顿优化）
+- 原版 v1.2 Release 包：[`apk/jev-assistant-v1.2-release.apk`](apk/jev-assistant-v1.2-release.apk)
 
 ```bash
-adb install -r apk/jev-assistant-v1.2-release.apk
+adb install -r apk/jev-assistant-v1.3-debug.apk
 ```
 
-**2. 填密钥。** 打开 App → 设置 → 填你自己的 [OpenRouter](https://openrouter.ai/) API Key；回复模型默认 `deepseek/deepseek-chat-v3.1`（国内 Gemini / OpenAI 会被区域限制）。
+**2. 配置服务商与密钥。** 打开 App → 设置 → 选择服务商（DeepSeek、OpenAI、硅基流动、月之暗面、智谱、OpenRouter 或自定义 API），填入对应的 API Key 与模型名称，选择你偏好的人设风格。
 
 **3. 开权限。** 按主页向导开三项：
 - 无障碍（读消息）
@@ -133,13 +142,6 @@ JDK 17 + Android SDK（platform 35 / build-tools 35）。
 
 <p align="center"><sub>群二维码 7 天有效（本批到 2026-09-28），过期了公众号私信要新码。</sub></p>
 
-## 姊妹项目
-
-这个项目和几个朋友的 AI 工具放在同一个组织 [jev-chat](https://github.com/jev-chat) 下面：
-
-- [Jev 聊天助手 macOS 版](https://github.com/jev-chat/jev-chat-mac)：微信消息意图识别悬浮窗，看屏 + 本地小模型判断意图和风险，再按话术生成回复候选，纯只读。
-- [Jev 聊天助手 Windows 版](https://github.com/jev-chat/jev-chat-windows)：微信 Windows 4.x 旁挂的回复辅助，窗口截图 + 本地离线 OCR，3 条候选一键填入，发送永远手动。
-- [微墨 WeChat Ink](https://github.com/Snowwit88/wechat-ink)：微信公众号写作、配图与排版助手，支持资料核验、学术风图文和草稿发布。
 ## 免责声明与许可
 
 仅供个人学习与研究使用。只处理你自己设备上、你自己有权查看的聊天。请遵守微信、QQ、X、飞书等各软件的许可协议与当地法律法规，作者不对使用后果负责。代码以 [MIT](LICENSE) 协议开源。

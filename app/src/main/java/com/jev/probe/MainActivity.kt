@@ -89,7 +89,7 @@ class MainActivity : AppCompatActivity() {
 
         // Actions
         container.addView(sectionLabel("其他"))
-        container.addView(actionRow("设置", "密钥 · 模型 · 关系 · 透明度 · 会话白名单") {
+        container.addView(actionRow("接口与模型设置", "平台 (${prefs.currentProvider.name}) · 密钥 · 模型 · 关系 · 透明度") {
             startActivity(Intent(this, SettingsActivity::class.java))
         })
 
@@ -114,7 +114,7 @@ class MainActivity : AppCompatActivity() {
         c.addView(head)
         c.addView(checkLine("无障碍", a11y))
         c.addView(checkLine("悬浮窗", overlay))
-        c.addView(checkLine("密钥", key, okWord = "已设", noWord = "未设"))
+        c.addView(checkLine("服务商 (${prefs.currentProvider.name}) 密钥", key, okWord = "已配置", noWord = "未配置"))
         return c
     }
 

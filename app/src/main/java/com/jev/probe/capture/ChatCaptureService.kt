@@ -89,11 +89,19 @@ open class ChatCaptureService : AccessibilityService() {
         }
 
         when (type) {
-            AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED,
+            AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED -> {
+                main.removeCallbacks(captureDebounce)
+                maybeCapture()
+            }
             AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED,
-            AccessibilityEvent.TYPE_VIEW_SCROLLED -> maybeCapture()
+            AccessibilityEvent.TYPE_VIEW_SCROLLED -> {
+                main.removeCallbacks(captureDebounce)
+                main.postDelayed(captureDebounce, 300)
+            }
         }
     }
+
+    private val captureDebounce = Runnable { maybeCapture() }
 
     private fun maybeCapture() {
         val root = rootInActiveWindow ?: return
@@ -134,10 +142,16 @@ open class ChatCaptureService : AccessibilityService() {
     private fun runAnalysis() {
         val snapshot = pendingSnapshot ?: return
         if (analyzing) return
-        if (!prefs.hasKey()) { main.post { overlay?.showError("未设置 OpenRouter 密钥，去设置里填") }; return }
+        if (!prefs.hasKey()) { main.post { overlay?.showError("未设置 API 密钥，请在设置中配置") }; return }
         analyzing = true
         main.post { overlay?.showLoading() }
-        val client = JevClient(prefs.openRouterKey, prefs.replyModel)
+        val client = JevClient(
+            provider = prefs.apiProvider,
+            baseUrl = prefs.apiBaseUrl,
+            key = prefs.apiKey,
+            replyModel = prefs.apiModel,
+            customStyle = prefs.customStyle
+        )
         val rel = prefs.relationship
         // Judgment is fast (~1s) — show it immediately.
         submit {
