@@ -13,13 +13,36 @@ class Prefs(context: Context) {
 
     private val sp = context.getSharedPreferences("jev_assistant", Context.MODE_PRIVATE)
 
-    /** Currently active provider ID (e.g. DEEPSEEK, OPENAI, OPENROUTER, etc.) */
+    /** Currently active completion/draft provider ID (e.g. DEEPSEEK, OPENAI, OPENROUTER, etc.) */
     var apiProvider: String
-        get() = sp.getString(K_PROVIDER, ApiProviders.DEEPSEEK.id) ?: ApiProviders.DEEPSEEK.id
+        get() {
+            val p = sp.getString(K_PROVIDER, ApiProviders.DEEPSEEK.id) ?: ApiProviders.DEEPSEEK.id
+            // If legacy setting set provider to TYPESAFE, fallback completion provider to DEEPSEEK
+            return if (p.equals(ApiProviders.TYPESAFE.id, ignoreCase = true)) ApiProviders.DEEPSEEK.id else p
+        }
         set(v) = sp.edit().putString(K_PROVIDER, v.trim()).apply()
 
     val currentProvider: ApiProvider
         get() = ApiProviders.find(apiProvider)
+
+    /** TypeSafe Jev official decision & ranking engine settings */
+    var jevEnabled: Boolean
+        get() = sp.getBoolean(K_JEV_ENABLED, true)
+        set(v) = sp.edit().putBoolean(K_JEV_ENABLED, v).apply()
+
+    var jevKey: String
+        get() = getKey(ApiProviders.TYPESAFE.id)
+        set(v) = setKey(ApiProviders.TYPESAFE.id, v)
+
+    var jevBaseUrl: String
+        get() = getBaseUrl(ApiProviders.TYPESAFE.id)
+        set(v) = setBaseUrl(ApiProviders.TYPESAFE.id, v)
+
+    var jevModel: String
+        get() = getModel(ApiProviders.TYPESAFE.id)
+        set(v) = setModel(ApiProviders.TYPESAFE.id, v)
+
+    fun hasJevKey(): Boolean = jevKey.isNotBlank()
 
     fun getKey(providerId: String): String {
         val saved = sp.getString("key_${providerId.uppercase()}", "") ?: ""
@@ -147,6 +170,7 @@ class Prefs(context: Context) {
 
     companion object {
         private const val K_PROVIDER = "api_provider"
+        private const val K_JEV_ENABLED = "jev_enabled"
         private const val K_LEGACY_KEY = "openrouter_key"
         private const val K_LEGACY_REPLY_MODEL = "reply_model"
         private const val K_REL = "relationship"

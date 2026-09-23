@@ -7,6 +7,7 @@ import android.os.Looper
 import android.util.Log
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
+import com.jev.probe.core.ApiProviders
 import com.jev.probe.core.ChatSnapshot
 import com.jev.probe.core.Prefs
 import com.jev.probe.jev.JevClient
@@ -142,16 +143,38 @@ open class ChatCaptureService : AccessibilityService() {
     private fun runAnalysis() {
         val snapshot = pendingSnapshot ?: return
         if (analyzing) return
-        if (!prefs.hasKey()) { main.post { overlay?.showError("未设置 API 密钥，请在设置中配置") }; return }
+        val hasCompletionKey = prefs.hasKey()
+        val hasJevKey = prefs.jevEnabled && prefs.hasJevKey()
+        if (!hasCompletionKey && !hasJevKey) {
+            main.post { overlay?.showError("未设置 API 密钥，请在设置中配置") }
+            return
+        }
         analyzing = true
         main.post { overlay?.showLoading() }
-        val client = JevClient(
-            provider = prefs.apiProvider,
-            baseUrl = prefs.apiBaseUrl,
-            key = prefs.apiKey,
-            replyModel = prefs.apiModel,
-            customStyle = prefs.customStyle
-        )
+
+        val draftClient = if (hasCompletionKey) {
+            JevClient(
+                provider = prefs.apiProvider,
+                baseUrl = prefs.apiBaseUrl,
+                key = prefs.apiKey,
+                replyModel = prefs.apiModel,
+                customStyle = prefs.customStyle
+            )
+        } else null
+
+        val client = if (hasJevKey) {
+            JevClient(
+                provider = ApiProviders.TYPESAFE.id,
+                baseUrl = prefs.jevBaseUrl,
+                key = prefs.jevKey,
+                replyModel = prefs.jevModel,
+                customStyle = prefs.customStyle
+            ).apply {
+                this.draftClient = draftClient
+            }
+        } else {
+            draftClient!!
+        }
         val rel = prefs.relationship
         // Judgment is fast (~1s) — show it immediately.
         submit {

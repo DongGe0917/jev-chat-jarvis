@@ -11,6 +11,8 @@ import urllib.request
 
 API_URL = "https://openrouter.ai/api/alpha/decisions"
 MODEL = "typesafe/jev-1.13"
+TYPESAFE_API_URL = "https://api.typesafe.ai/v1/systemone"
+TYPESAFE_MODEL = "jev-latest"
 MAX_RETRIES = 3
 
 
@@ -24,20 +26,25 @@ def redact_secrets(text: str) -> str:
     """Strip the live key from any string before print or disk write."""
     if not isinstance(text, str):
         text = str(text)
-    key = os.environ.get("OPENROUTER_API_KEY") or ""
-    if key:
-        text = text.replace(key, "[REDACTED]")
+    for env in ("OPENROUTER_API_KEY", "TYPESAFE_API_KEY"):
+        key = os.environ.get(env) or ""
+        if key:
+            text = text.replace(key, "[REDACTED]")
     return text
 
 
-def _api_key() -> str:
+def _api_key() -> tuple[str, str, str]:
+    """Returns (key, api_url, model) based on available environment variables."""
+    ts_key = (os.environ.get("TYPESAFE_API_KEY") or "").strip()
+    if ts_key:
+        return ts_key, TYPESAFE_API_URL, TYPESAFE_MODEL
     key = (os.environ.get("OPENROUTER_API_KEY") or "").strip()
     if not key:
         raise JevError(
-            "OPENROUTER_API_KEY is not set. Export it in the environment; "
-            "do not put the key in a file."
+            "Neither TYPESAFE_API_KEY nor OPENROUTER_API_KEY is set. "
+            "Export it in the environment; do not put the key in a file."
         )
-    return key
+    return key, API_URL, MODEL
 
 
 def _error_body(exc: urllib.error.HTTPError) -> str:
@@ -54,9 +61,9 @@ def ask(state: dict, questions: dict, timeout: float = 20) -> dict:
     Retries HTTP 429 and 529 up to 3 times with exponential backoff.
     Never prints or writes the API key.
     """
-    key = _api_key()
+    key, url, model = _api_key()
     payload = json.dumps(
-        {"model": MODEL, "state": state, "questions": questions},
+        {"model": model, "state": state, "questions": questions},
         ensure_ascii=False,
     ).encode("utf-8")
 
@@ -64,7 +71,7 @@ def ask(state: dict, questions: dict, timeout: float = 20) -> dict:
     last_body = ""
     for attempt in range(MAX_RETRIES + 1):
         req = urllib.request.Request(
-            API_URL,
+            url,
             data=payload,
             method="POST",
             headers={

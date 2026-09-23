@@ -98,6 +98,61 @@ class JevMultiProviderTest {
                 return
             }
 
+            if (headerStr.contains("/v1/systemone")) {
+                val systemOneResponse = if (body.contains("best_reply")) {
+                    """
+                    {
+                      "model": "jev-1.13.0",
+                      "answers": {
+                        "best_reply": {
+                          "type": "choice",
+                          "choice": "reply_a",
+                          "confidence": 0.88,
+                          "probabilities": {
+                            "reply_a": 0.70,
+                            "reply_b": 0.20,
+                            "reply_c": 0.10
+                          }
+                        }
+                      },
+                      "usage": {"input_tokens": 180, "output_tokens": 20}
+                    }
+                    """.trimIndent()
+                } else if (body.contains("ping")) {
+                    """
+                    {
+                      "model": "jev-1.13.0",
+                      "answers": {
+                        "ok": {"type": "noul", "noul": 1.0}
+                      },
+                      "usage": {"input_tokens": 20, "output_tokens": 5}
+                    }
+                    """.trimIndent()
+                } else {
+                    """
+                    {
+                      "model": "jev-1.13.0",
+                      "answers": {
+                        "literal_question": {"type": "noul", "noul": 0.05},
+                        "true_intent": {"type": "choice", "choice": "confirm_you_care", "confidence": 0.95, "probabilities": {"confirm_you_care": 0.95}},
+                        "danger_level": {"type": "score", "score": 5.0, "confidence": 0.90, "legend": {"0": "0", "9": "9"}},
+                        "she_needs": {"type": "choice", "choice": "care", "confidence": 0.92, "probabilities": {"care": 0.92}},
+                        "should_reply_now": {"type": "noul", "noul": 0.0},
+                        "best_action": {"type": "choice", "choice": "check_history", "confidence": 0.89, "probabilities": {"check_history": 0.89}},
+                        "tension_resolved": {"type": "noul", "noul": 0.0}
+                      },
+                      "usage": {"input_tokens": 296, "output_tokens": 20}
+                    }
+                    """.trimIndent()
+                }
+                val respBytes = systemOneResponse.toByteArray(Charsets.UTF_8)
+                val respHeader = "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nConnection: close\r\nContent-Length: ${respBytes.size}\r\n\r\n"
+                output.write(respHeader.toByteArray(Charsets.UTF_8))
+                output.write(respBytes)
+                output.flush()
+                return
+            }
+
             val isJudgment = body.contains("研判核心准则") || body.contains("心理研判")
             val innerContent = if (isJudgment) {
                 """
@@ -243,6 +298,64 @@ class JevMultiProviderTest {
 
         // Verify customStyle was included in the request body
         assertTrue(lastRequestBody?.contains("幽默机智") == true)
+    }
+
+    @Test
+    fun testTypeSafeJevJudgmentViaMockServer() {
+        val draftClient = JevClient(
+            provider = "DEEPSEEK",
+            baseUrl = "http://127.0.0.1:$serverPort",
+            key = "sk-mock-deepseek",
+            replyModel = "deepseek-chat"
+        )
+
+        val client = JevClient(
+            provider = "TYPESAFE",
+            baseUrl = "http://127.0.0.1:$serverPort",
+            key = "apikey_mock_typesafe_123456",
+            replyModel = "jev-latest"
+        ).apply {
+            this.draftClient = draftClient
+        }
+
+        val snapshot = ChatSnapshot(
+            title = "测试会话",
+            messages = listOf(
+                Msg("other", "你今天是不是又忘了我跟你说过什么？"),
+                Msg("me", "记得，你先别提示我，让我自己说。"),
+                Msg("other", "那你最好是。")
+            )
+        )
+
+        val analysis = client.judge(snapshot, "对方是我的伴侣")
+
+        assertEquals("Bearer apikey_mock_typesafe_123456", lastReceivedAuth)
+        assertNotNull(analysis)
+        assertEquals(null, analysis.error)
+        assertEquals("confirm_you_care", analysis.trueIntent?.choice)
+        assertEquals(0.95, analysis.trueIntent?.confidence ?: 0.0, 0.01)
+        assertEquals(5.0, analysis.dangerLevel?.score ?: 0.0, 0.01)
+        assertEquals("care", analysis.sheNeeds?.choice)
+        assertEquals("check_history", analysis.bestAction?.choice)
+        assertEquals(0.0, analysis.shouldReplyNow ?: 1.0, 0.01)
+
+        val replies = client.draftAndRank(snapshot, "对方是我的伴侣")
+        assertNotNull(replies)
+        assertEquals(3, replies.size)
+        assertEquals("记得，我翻一下聊天记录复述给你听", replies[0].text)
+        assertEquals(0.70, replies[0].prob, 0.01)
+    }
+
+    @Test
+    fun testTypeSafePingMethod() {
+        val pingRes = JevClient.pingTypeSafe("http://127.0.0.1:$serverPort", "apikey_mock_typesafe_ping")
+        assertTrue("Ping should succeed with HTTP 200", pingRes.contains("200"))
+    }
+
+    @Test
+    fun testChatCompletionMethod() {
+        val compRes = JevClient.testChatCompletion("http://127.0.0.1:$serverPort", "sk-mock-key", "deepseek-chat")
+        assertTrue("Chat completion test should succeed", compRes.contains("200"))
     }
 
     @Test

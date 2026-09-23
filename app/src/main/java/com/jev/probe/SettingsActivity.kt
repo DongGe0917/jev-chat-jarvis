@@ -62,13 +62,13 @@ class SettingsActivity : AppCompatActivity() {
 
         root.addView(header("设置"))
 
-        // --- 接口平台 (Cherry Studio 模式) ---
-        root.addView(section("模型服务商 (API)"))
+        // --- 1. AI 文本补全与候选起草平台 ---
+        root.addView(section("AI 文本补全与候选起草服务商"))
         val card1 = card()
 
         // 1. 服务商选择
-        card1.addView(label("选择模型平台"))
-        val providers = ApiProviders.ALL
+        card1.addView(label("选择模型平台 (DeepSeek / OpenAI 等)"))
+        val providers = ApiProviders.DRAFT_PROVIDERS
         val providerNames = providers.map { it.name }
         val spinner = Spinner(this).apply {
             adapter = ArrayAdapter(this@SettingsActivity, android.R.layout.simple_spinner_dropdown_item, providerNames)
@@ -112,7 +112,7 @@ class SettingsActivity : AppCompatActivity() {
         card1.addView(keyEdit)
 
         // 4. 模型名称
-        card1.addView(label("回复与研判模型"))
+        card1.addView(label("候选回复起草模型"))
         val modelEdit = edit(prefs.getModel(currentSelectedProvider.id), currentSelectedProvider.defaultModel)
         card1.addView(modelEdit)
 
@@ -148,12 +148,10 @@ class SettingsActivity : AppCompatActivity() {
             override fun onItemSelected(parent: AdapterView<*>?, view: View?, position: Int, id: Long) {
                 val newProvider = providers[position]
                 if (newProvider.id != currentSelectedProvider.id) {
-                    // 切换时把当前输入的暂存一下
                     prefs.setKey(currentSelectedProvider.id, keyEdit.text.toString())
                     prefs.setBaseUrl(currentSelectedProvider.id, urlEdit.text.toString())
                     prefs.setModel(currentSelectedProvider.id, modelEdit.text.toString())
 
-                    // 加载新平台的配置
                     currentSelectedProvider = newProvider
                     urlEdit.setText(prefs.getBaseUrl(newProvider.id))
                     urlEdit.hint = newProvider.defaultBaseUrl
@@ -167,9 +165,83 @@ class SettingsActivity : AppCompatActivity() {
             override fun onNothingSelected(parent: AdapterView<*>?) {}
         }
 
+        val draftTestResult = text("未测试", 12f, sub).apply { setPadding(0, dp(6), 0, dp(4)) }
+        val testDraftBtn = secondaryBtn("测试文本补全连接") {
+            val key = keyEdit.text.toString().trim()
+            val url = urlEdit.text.toString().trim().ifBlank { currentSelectedProvider.defaultBaseUrl }
+            val model = modelEdit.text.toString().trim().ifBlank { currentSelectedProvider.defaultModel }
+            if (key.isBlank()) {
+                draftTestResult.text = "❌ 请先填入当前平台的 API 密钥"
+                draftTestResult.setTextColor(Color.RED)
+                return@secondaryBtn
+            }
+            draftTestResult.text = "正在连接 ${currentSelectedProvider.name} 测试…"
+            draftTestResult.setTextColor(sub)
+            worker.execute {
+                try {
+                    val msg = JevClient.testChatCompletion(url, key, model)
+                    main.post {
+                        draftTestResult.text = "✅ $msg"
+                        draftTestResult.setTextColor(green)
+                    }
+                } catch (e: Exception) {
+                    main.post {
+                        draftTestResult.text = "❌ 失败：${e.message}"
+                        draftTestResult.setTextColor(Color.RED)
+                    }
+                }
+            }
+        }
+        card1.addView(testDraftBtn)
+        card1.addView(draftTestResult)
         root.addView(card1)
 
-        // --- 研判与人设 ---
+        // --- 2. TypeSafe Jev 官方心理研判引擎 ---
+        root.addView(section("TypeSafe Jev 官方心理研判引擎 (可选 / 推荐)"))
+        val cardJev = card()
+
+        val jevToggle = toggleRow("启用 TypeSafe Jev 官方研判引擎", prefs.jevEnabled)
+        cardJev.addView(jevToggle)
+
+        cardJev.addView(text("开启后，大模型起草的 3 条回复将由 TypeSafe 官方 System One 模型进行 7 维人际心理学研判与高置信度排序择优；关闭则使用通用大模型内置研判。", 12f, sub).apply {
+            setPadding(0, dp(4), 0, dp(8))
+        })
+
+        cardJev.addView(label("TypeSafe API 密钥 (apikey_...)"))
+        val jevKeyEdit = edit(prefs.jevKey, "apikey_...", password = true)
+        cardJev.addView(jevKeyEdit)
+
+        val jevTestResult = text("未测试", 12f, sub).apply { setPadding(0, dp(6), 0, dp(4)) }
+        val testJevBtn = secondaryBtn("测试 Jev 研判连接") {
+            val key = jevKeyEdit.text.toString().trim().ifBlank { prefs.jevKey }
+            val url = prefs.jevBaseUrl
+            if (key.isBlank()) {
+                jevTestResult.text = "❌ 请先填入 TypeSafe 官方 API 密钥 (apikey_...)"
+                jevTestResult.setTextColor(Color.RED)
+                return@secondaryBtn
+            }
+            jevTestResult.text = "正在连接 TypeSafe 官方 System One 接口…"
+            jevTestResult.setTextColor(sub)
+            worker.execute {
+                try {
+                    val msg = JevClient.pingTypeSafe(url, key)
+                    main.post {
+                        jevTestResult.text = "✅ $msg"
+                        jevTestResult.setTextColor(green)
+                    }
+                } catch (e: Exception) {
+                    main.post {
+                        jevTestResult.text = "❌ 失败：${e.message}"
+                        jevTestResult.setTextColor(Color.RED)
+                    }
+                }
+            }
+        }
+        cardJev.addView(testJevBtn)
+        cardJev.addView(jevTestResult)
+        root.addView(cardJev)
+
+        // --- 3. 研判与人设 ---
         root.addView(section("研判与人设定制"))
         val card2 = card()
         card2.addView(label("关系设定（告诉模型对方是谁，怎么区分）"))
@@ -213,7 +285,7 @@ class SettingsActivity : AppCompatActivity() {
         card2.addView(autoRow)
         root.addView(card2)
 
-        // --- 外观 ---
+        // --- 4. 外观 ---
         root.addView(section("外观"))
         val card3 = card()
         val opacityLabel = label("悬浮窗不透明度：${prefs.overlayOpacity}%")
@@ -232,41 +304,24 @@ class SettingsActivity : AppCompatActivity() {
         card3.addView(seek)
         root.addView(card3)
 
-        // --- Actions ---
-        val result = text("", 13f, sub).apply { setPadding(0, dp(12), 0, dp(4)) }
+        // --- 5. 保存配置 ---
         root.addView(primaryBtn("保存配置") {
             prefs.apiProvider = currentSelectedProvider.id
             prefs.setKey(currentSelectedProvider.id, keyEdit.text.toString())
             prefs.setBaseUrl(currentSelectedProvider.id, urlEdit.text.toString().ifBlank { currentSelectedProvider.defaultBaseUrl })
             prefs.setModel(currentSelectedProvider.id, modelEdit.text.toString().ifBlank { currentSelectedProvider.defaultModel })
 
+            prefs.jevEnabled = (jevToggle.tag as? Boolean) ?: true
+            prefs.jevKey = jevKeyEdit.text.toString().trim()
+
             prefs.relationship = relEdit.text.toString().ifBlank { Prefs.DEFAULT_REL }
             prefs.customStyle = styleEdit.text.toString().ifBlank { Prefs.DEFAULT_CUSTOM_STYLE }
             prefs.whitelist = wlEdit.text.toString().split("\n").map { it.trim() }.filter { it.isNotEmpty() }.toSet()
             prefs.autoAnalyze = (autoRow.tag as? Boolean) ?: true
             prefs.overlayOpacity = seek.progress + 60
-            Toast.makeText(this, "配置已保存（当前平台: ${currentSelectedProvider.name}）", Toast.LENGTH_SHORT).show()
+            val jevStatus = if (prefs.jevEnabled && prefs.hasJevKey()) "已启用 (TypeSafe)" else "已停用"
+            Toast.makeText(this, "配置已保存（补全: ${currentSelectedProvider.name}，Jev研判: $jevStatus）", Toast.LENGTH_SHORT).show()
         })
-
-        root.addView(secondaryBtn("连通测试") {
-            val key = keyEdit.text.toString().trim()
-            val url = urlEdit.text.toString().trim().ifBlank { currentSelectedProvider.defaultBaseUrl }
-            val model = modelEdit.text.toString().trim().ifBlank { currentSelectedProvider.defaultModel }
-            val style = styleEdit.text.toString().trim()
-            if (key.isBlank()) { result.text = "请先填入密钥"; return@secondaryBtn }
-            result.text = "正在连接 ${currentSelectedProvider.name} 测试…"
-            worker.execute {
-                val demo = ChatSnapshot("连通测试", listOf(
-                    Msg("other", "在吗？"), Msg("me", "在"), Msg("other", "那你说说昨天答应我的事")))
-                val client = JevClient(currentSelectedProvider.id, url, key, model, style)
-                val a = client.analyze(demo, prefs.relationship)
-                main.post {
-                    result.text = if (a.error != null) "❌ 失败：${a.error}"
-                    else "✅ 成功：意图=${a.trueIntent?.choice ?: "?"}，危险度=${a.dangerLevel?.score?.roundToInt() ?: 0}，候选=${a.rankedReplies.size} 条，耗时 ${a.latencyMs}ms"
-                }
-            }
-        })
-        root.addView(result)
 
         setContentView(scroll)
     }

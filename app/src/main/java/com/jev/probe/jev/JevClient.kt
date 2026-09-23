@@ -31,7 +31,8 @@ class JevClient(
     val baseUrl: String,
     val key: String,
     val replyModel: String,
-    val customStyle: String = ""
+    val customStyle: String = "",
+    var draftClient: JevClient? = null
 ) {
 
     /** Legacy constructor for backward compatibility */
@@ -43,8 +44,10 @@ class JevClient(
         ""
     )
 
+    val isTypeSafe = provider.equals(ApiProviders.TYPESAFE.id, ignoreCase = true)
     private val isOpenRouter = provider.equals(ApiProviders.OPENROUTER.id, ignoreCase = true)
     private val decisionsUrl = "https://openrouter.ai/api/alpha/decisions"
+    private val typeSafeSystemOneUrl = "${baseUrl.trim().trimEnd('/')}/v1/systemone"
 
     private fun getChatCompletionsUrl(): String {
         val clean = baseUrl.trim().trimEnd('/')
@@ -59,15 +62,17 @@ class JevClient(
     fun judge(snapshot: ChatSnapshot, relationship: String): Analysis {
         val start = System.currentTimeMillis()
         try {
-            if (isOpenRouter) {
-                try {
-                    return judgeViaOpenRouter(snapshot, relationship, start)
-                } catch (e: Exception) {
-                    Log.w(TAG, "OpenRouter decisions failed, falling back to chat completions: ${e.message}")
-                    return judgeViaChatCompletions(snapshot, relationship, start)
+            return when {
+                isTypeSafe -> judgeViaTypeSafe(snapshot, relationship, start)
+                isOpenRouter -> {
+                    try {
+                        judgeViaOpenRouter(snapshot, relationship, start)
+                    } catch (e: Exception) {
+                        Log.w(TAG, "OpenRouter decisions failed, falling back to chat completions: ${e.message}")
+                        judgeViaChatCompletions(snapshot, relationship, start)
+                    }
                 }
-            } else {
-                return judgeViaChatCompletions(snapshot, relationship, start)
+                else -> judgeViaChatCompletions(snapshot, relationship, start)
             }
         } catch (e: Exception) {
             Log.w(TAG, "judge failed: ${e.message}")
@@ -80,15 +85,17 @@ class JevClient(
 
     /** Draft 3 candidate replies and rank them. */
     fun draftAndRank(snapshot: ChatSnapshot, relationship: String): List<RankedReply> {
-        return if (isOpenRouter) {
-            try {
-                draftAndRankViaOpenRouter(snapshot, relationship)
-            } catch (e: Exception) {
-                Log.w(TAG, "OpenRouter draftAndRank failed, falling back to chat completions: ${e.message}")
-                draftAndRankViaChatCompletions(snapshot, relationship)
+        return when {
+            isTypeSafe -> draftAndRankViaTypeSafe(snapshot, relationship)
+            isOpenRouter -> {
+                try {
+                    draftAndRankViaOpenRouter(snapshot, relationship)
+                } catch (e: Exception) {
+                    Log.w(TAG, "OpenRouter draftAndRank failed, falling back to chat completions: ${e.message}")
+                    draftAndRankViaChatCompletions(snapshot, relationship)
+                }
             }
-        } else {
-            draftAndRankViaChatCompletions(snapshot, relationship)
+            else -> draftAndRankViaChatCompletions(snapshot, relationship)
         }
     }
 
@@ -98,6 +105,43 @@ class JevClient(
         if (a.error != null) return a
         val ranked = try { draftAndRank(snapshot, relationship) } catch (e: Exception) { emptyList() }
         return a.copy(rankedReplies = ranked)
+    }
+
+    // =========================================================================
+    // TypeSafe native System One decision endpoints (Official Jev API)
+    // =========================================================================
+
+    private fun judgeViaTypeSafe(snapshot: ChatSnapshot, relationship: String, start: Long): Analysis {
+        val model = if (replyModel.isNotBlank()) replyModel else "jev-latest"
+        val body = JSONObject()
+            .put("model", model)
+            .put("state", JevQuestions.buildState(snapshot, relationship))
+            .put("questions", JevQuestions.judge())
+        val answers = postJson(typeSafeSystemOneUrl, body).optJSONObject("answers") ?: JSONObject()
+        return Analysis(
+            trueIntent = parseChoice(answers.optJSONObject("true_intent")),
+            dangerLevel = parseScore(answers.optJSONObject("danger_level")),
+            sheNeeds = parseChoice(answers.optJSONObject("she_needs")),
+            shouldReplyNow = answers.optJSONObject("should_reply_now")?.optDouble("noul"),
+            bestAction = parseChoice(answers.optJSONObject("best_action")),
+            tensionResolved = answers.optJSONObject("tension_resolved")?.optDouble("noul"),
+            literalQuestion = answers.optJSONObject("literal_question")?.optDouble("noul"),
+            rankedReplies = emptyList(),
+            latencyMs = System.currentTimeMillis() - start
+        )
+    }
+
+    private fun draftAndRankViaTypeSafe(snapshot: ChatSnapshot, relationship: String): List<RankedReply> {
+        val candidates = generateCandidates(snapshot, relationship)
+        val questions = JSONObject().put("best_reply",
+            JevQuestions.rankQuestion(candidates).getJSONObject("best_reply"))
+        val model = if (replyModel.isNotBlank()) replyModel else "jev-latest"
+        val body = JSONObject()
+            .put("model", model)
+            .put("state", JevQuestions.buildState(snapshot, relationship))
+            .put("questions", questions)
+        val answers = postJson(typeSafeSystemOneUrl, body).optJSONObject("answers") ?: JSONObject()
+        return parseRanked(answers.optJSONObject("best_reply"), candidates)
     }
 
     // =========================================================================
@@ -275,7 +319,22 @@ class JevClient(
         return parseRankedRepliesFromChat(cleanJson(content))
     }
 
-    private fun generateCandidates(snapshot: ChatSnapshot, relationship: String): List<String> {
+    fun generateCandidates(snapshot: ChatSnapshot, relationship: String): List<String> {
+        val dc = draftClient
+        if (dc != null) {
+            try {
+                val c = dc.generateCandidates(snapshot, relationship)
+                if (c.isNotEmpty()) {
+                    return c
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "draftClient failed: ${e.message}")
+                throw e
+            }
+        }
+        if (isTypeSafe) {
+            throw IllegalStateException("未配置文本补全服务商（如 DeepSeek/OpenAI 等）。请在设置中配置文本补全服务商以起草候选回复。")
+        }
         val convo = snapshot.messages.takeLast(10).joinToString("\n") {
             (if (it.side == "me") "我" else "对方") + "：" + it.text
         }
@@ -295,6 +354,14 @@ class JevClient(
         val content = resp.optJSONArray("choices")?.optJSONObject(0)
             ?.optJSONObject("message")?.optString("content") ?: ""
         return parseThree(cleanJson(content))
+    }
+
+    private fun buildContextualCandidates(snapshot: ChatSnapshot, relationship: String): List<String> {
+        return listOf(
+            "收到，我看了下，刚才手头有点事，稍后马上和你说。",
+            "刚才看到，我确认了一下细节，等我忙完这个点就去找你。",
+            "在的，别急，我心里有数。"
+        )
     }
 
     private fun parseRankedRepliesFromChat(content: String): List<RankedReply> {
@@ -338,15 +405,26 @@ class JevClient(
             try {
                 val arr = JSONArray(content.substring(start, end + 1))
                 val out = ArrayList<String>()
-                for (i in 0 until arr.length()) out.add(arr.getString(i).trim())
+                for (i in 0 until arr.length()) {
+                    val item = arr.opt(i)
+                    if (item is JSONObject) {
+                        val txt = item.optString("text", item.optString("reply", "")).trim()
+                        if (txt.isNotBlank()) out.add(txt)
+                    } else if (item is String && item.isNotBlank()) {
+                        out.add(item.trim())
+                    }
+                }
                 if (out.size >= 3) return out.take(3)
-                while (out.size < 3) out.add("（稍等，我看下）")
-                return out
+                if (out.isNotEmpty()) {
+                    while (out.size < 3) out.add("（稍等，我看下）")
+                    return out
+                }
             } catch (_: Exception) { }
         }
         // Fallback: split lines.
-        val lines = content.split("\n").map { it.trim().trimStart('-', '*', '1', '2', '3', '.', ' ', '"') }
-            .filter { it.isNotBlank() }
+        val lines = content.split("\n")
+            .map { it.trim().trimStart('-', '*', '1', '2', '3', '.', ' ', '"', '[', ']').trimEnd(',', '"', ']') }
+            .filter { it.isNotBlank() && !it.startsWith("{") && !it.startsWith("}") }
         val out = lines.take(3).toMutableList()
         while (out.size < 3) out.add("（稍等，我看下）")
         return out
@@ -391,6 +469,7 @@ class JevClient(
                     doOutput = true
                     setRequestProperty("Authorization", "Bearer $key")
                     setRequestProperty("Content-Type", "application/json")
+                    setRequestProperty("User-Agent", "Mozilla/5.0 (Android; Mobile) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Mobile Safari/537.36")
                     if (isOpenRouter) {
                         setRequestProperty("HTTP-Referer", "https://jev-assistant.local")
                         setRequestProperty("X-Title", "Jev Assistant")
@@ -423,9 +502,12 @@ class JevClient(
     private fun readableError(e: Exception): String {
         val m = e.message ?: e.javaClass.simpleName
         return when {
-            m.contains("HTTP 401") -> "密钥无效或未授权（401）"
+            m.contains("HTTP 401") -> if (isTypeSafe) "TypeSafe API Key 错误或失效（401）" else "密钥无效或未授权（401）"
+            m.contains("HTTP 402") -> "TypeSafe 官方额度已用尽（402），请更换 Key"
             m.contains("HTTP 404") -> "接口地址不存在（404）"
-            m.contains("HTTP 429") -> "请求过于频繁或额度不足（429）"
+            m.contains("HTTP 422") -> "请求格式错误（422）"
+            m.contains("HTTP 429") -> "官方限速或请求频繁（429），请稍后重试"
+            m.contains("HTTP 529") -> "TypeSafe 官方服务过载（529），请稍后重试"
             m.contains("HTTP 4") -> "请求被拒：$m"
             m.contains("timed out") || m.contains("timeout") -> "网络超时，请检查连接"
             m.contains("Unable to resolve host") || m.contains("Failed to connect") -> "无法连接网络或域名无效"
@@ -433,5 +515,88 @@ class JevClient(
         }
     }
 
-    companion object { private const val TAG = "JEVASSIST" }
+    companion object {
+        private const val TAG = "JEVASSIST"
+        private const val USER_AGENT = "Mozilla/5.0 (Android; Mobile) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Mobile Safari/537.36"
+
+        /** TypeSafe 官方 10 秒快速自测（返回 HTTP 200 即代表可用） */
+        fun pingTypeSafe(baseUrl: String, key: String): String {
+            val url = "${baseUrl.trim().trimEnd('/')}/v1/systemone"
+            val body = JSONObject()
+                .put("state", "ping")
+                .put("model", "jev-latest")
+                .put("questions", JSONObject().put("ok", JSONObject()
+                    .put("type", "noul")
+                    .put("instructions", "Is this a test?")))
+            val conn = (URL(url).openConnection() as HttpURLConnection).apply {
+                requestMethod = "POST"
+                connectTimeout = 8000
+                readTimeout = 10000
+                doOutput = true
+                setRequestProperty("Authorization", "Bearer ${key.trim()}")
+                setRequestProperty("Content-Type", "application/json")
+                setRequestProperty("User-Agent", USER_AGENT)
+            }
+            val start = System.currentTimeMillis()
+            conn.outputStream.use { it.write(body.toString().toByteArray(Charsets.UTF_8)) }
+            val code = conn.responseCode
+            val text = (if (code in 200..299) conn.inputStream else conn.errorStream)
+                ?.bufferedReader()?.use { it.readText() } ?: ""
+            conn.disconnect()
+            val latency = System.currentTimeMillis() - start
+            if (code == 200) {
+                return "自测成功 (HTTP 200, TypeSafe Jev 响应正常, 延时 ${latency}ms)"
+            }
+            val errDesc = when (code) {
+                401 -> "API Key 错误或未授权 (401)"
+                402 -> "官方额度已用尽 (402)"
+                422 -> "请求体格式错误 (422)"
+                429 -> "官方接口限速 (429)"
+                529 -> "官方服务过载 (529)"
+                else -> "HTTP $code: ${text.take(80)}"
+            }
+            throw RuntimeException(errDesc)
+        }
+
+        /** 测试通用大模型文本补全连通性与时延 */
+        fun testChatCompletion(baseUrl: String, key: String, model: String): String {
+            val clean = baseUrl.trim().trimEnd('/')
+            val endpoint = when {
+                clean.endsWith("/chat/completions") -> clean
+                clean.endsWith("/v1") || clean.endsWith("/v4") -> "$clean/chat/completions"
+                else -> "$clean/v1/chat/completions"
+            }
+            val body = JSONObject()
+                .put("model", model.ifBlank { "deepseek-chat" })
+                .put("messages", JSONArray().put(JSONObject().put("role", "user").put("content", "请用一句话说你好")))
+                .put("max_tokens", 30)
+                .put("temperature", 0.7)
+
+            val conn = (URL(endpoint).openConnection() as HttpURLConnection).apply {
+                requestMethod = "POST"
+                connectTimeout = 8000
+                readTimeout = 12000
+                doOutput = true
+                setRequestProperty("Authorization", "Bearer ${key.trim()}")
+                setRequestProperty("Content-Type", "application/json")
+                setRequestProperty("User-Agent", USER_AGENT)
+            }
+            val start = System.currentTimeMillis()
+            conn.outputStream.use { it.write(body.toString().toByteArray(Charsets.UTF_8)) }
+            val code = conn.responseCode
+            val text = (if (code in 200..299) conn.inputStream else conn.errorStream)
+                ?.bufferedReader()?.use { it.readText() } ?: ""
+            conn.disconnect()
+            val latency = System.currentTimeMillis() - start
+            if (code in 200..299) {
+                val reply = try {
+                    val jsonObj = JSONObject(text)
+                    jsonObj.optJSONArray("choices")?.optJSONObject(0)
+                        ?.optJSONObject("message")?.optString("content")?.trim() ?: "连通正常"
+                } catch (e: Exception) { "连通正常" }
+                return "补全成功 (HTTP $code, 延时 ${latency}ms, 样例: \"${reply.take(25)}\")"
+            }
+            throw RuntimeException("HTTP $code: ${text.take(80)}")
+        }
+    }
 }

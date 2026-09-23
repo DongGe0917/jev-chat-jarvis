@@ -7,10 +7,21 @@ data class ApiProvider(
     val defaultModel: String,
     val recommendedModels: List<String>,
     val isOpenRouter: Boolean = false,
+    val isTypeSafe: Boolean = false,
     val hintKey: String = "sk-..."
 )
 
 object ApiProviders {
+    val TYPESAFE = ApiProvider(
+        id = "TYPESAFE",
+        name = "TypeSafe Jev (官方直连)",
+        defaultBaseUrl = "https://api.typesafe.ai",
+        defaultModel = "jev-latest",
+        recommendedModels = listOf("jev-latest", "jev-1.13.0"),
+        isTypeSafe = true,
+        hintKey = "apikey_..."
+    )
+
     val DEEPSEEK = ApiProvider(
         id = "DEEPSEEK",
         name = "DeepSeek (深度求索)",
@@ -84,7 +95,8 @@ object ApiProviders {
         hintKey = "API Key / 令牌"
     )
 
-    val ALL = listOf(DEEPSEEK, OPENAI, OPENROUTER, SILICONFLOW, MOONSHOT, ZHIPU, CUSTOM)
+    val ALL = listOf(TYPESAFE, DEEPSEEK, OPENAI, OPENROUTER, SILICONFLOW, MOONSHOT, ZHIPU, CUSTOM)
+    val DRAFT_PROVIDERS = listOf(DEEPSEEK, OPENAI, OPENROUTER, SILICONFLOW, MOONSHOT, ZHIPU, CUSTOM)
 
     fun find(id: String?): ApiProvider {
         return ALL.find { it.id.equals(id, ignoreCase = true) } ?: DEEPSEEK
