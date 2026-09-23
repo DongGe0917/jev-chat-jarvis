@@ -61,8 +61,8 @@ class SettingsActivity : AppCompatActivity() {
         scroll.addView(root)
 
         val appVersionName = try {
-            packageManager.getPackageInfo(packageName, 0).versionName ?: "1.4.1"
-        } catch (_: Exception) { "1.4.1" }
+            packageManager.getPackageInfo(packageName, 0).versionName ?: "1.5"
+        } catch (_: Exception) { "1.5" }
         val appVersionCode = try {
             packageManager.getPackageInfo(packageName, 0).longVersionCode
         } catch (_: Exception) { 5L }
