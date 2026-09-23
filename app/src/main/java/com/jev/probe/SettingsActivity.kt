@@ -60,7 +60,23 @@ class SettingsActivity : AppCompatActivity() {
         }
         scroll.addView(root)
 
-        root.addView(header("设置"))
+        val appVersionName = try {
+            packageManager.getPackageInfo(packageName, 0).versionName ?: "1.4.1"
+        } catch (_: Exception) { "1.4.1" }
+        val appVersionCode = try {
+            packageManager.getPackageInfo(packageName, 0).longVersionCode
+        } catch (_: Exception) { 5L }
+
+        val headerRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.BOTTOM
+            setPadding(0, 0, 0, dp(4))
+        }
+        headerRow.addView(text("设置", 24f, ink, bold = true))
+        headerRow.addView(text("  v$appVersionName", 14f, accent, bold = true).apply {
+            setPadding(dp(6), 0, 0, dp(4))
+        })
+        root.addView(headerRow)
 
         // --- 1. AI 文本补全与候选起草平台 ---
         root.addView(section("AI 文本补全与候选起草服务商"))
@@ -321,6 +337,12 @@ class SettingsActivity : AppCompatActivity() {
             prefs.overlayOpacity = seek.progress + 60
             val jevStatus = if (prefs.jevEnabled && prefs.hasJevKey()) "已启用 (TypeSafe)" else "已停用"
             Toast.makeText(this, "配置已保存（补全: ${currentSelectedProvider.name}，Jev研判: $jevStatus）", Toast.LENGTH_SHORT).show()
+        })
+
+        root.addView(text("Jev 聊天助手 v$appVersionName (Build $appVersionCode)\n双引擎架构 · 文本补全 + Jev 研判", 12f, sub).apply {
+            gravity = Gravity.CENTER
+            textAlignment = View.TEXT_ALIGNMENT_CENTER
+            setPadding(0, dp(18), 0, dp(10))
         })
 
         setContentView(scroll)
